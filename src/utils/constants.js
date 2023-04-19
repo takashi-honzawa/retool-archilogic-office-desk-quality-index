@@ -1,3 +1,4 @@
+export const apiBaseURL = "https://api.archilogic.com/v2/"
 export const startupSettings = {
   //planRotation: 90, 
   ui: { menu: false, scale: false },

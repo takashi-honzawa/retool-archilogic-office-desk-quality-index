@@ -2,13 +2,14 @@ import React, { useEffect, useRef } from 'react';
 import { FloorPlanEngine } from '@archilogic/floor-plan-sdk'
 import './FloorPlan.css'
 
+import { getMergedSpace, polygonPerimeter, polygonIntersection } from '@archilogic/scene-structure'
+
 import {
+  apiBaseURL,
   startupSettings,
   defaultColors,
-  valueToHex, 
-  rgbToHex,
   hexToRgb,
-  generateGradients,
+  generateGradients2Colors,
   generateGradients3Colors,
   map, 
   arrayEquals,
@@ -21,27 +22,30 @@ let deskDistanceObjects = []
 let deskIndexObjects = []
 
 let midPoints = 10
-let minColor = '#df9a9a'//'#eb4034'
-let maxColor = '#21ff00'//'#00aeff'
+let minColor = '#df9a9a'
+let maxColor = '#21ff00'
 let midColor = '#f1ff84'
-//const gradientColors = generateGradients(minColor, maxColor)
+//const gradientColors = generateGradients2Colors(minColor, maxColor)
 const gradientColors = generateGradients3Colors(minColor, midColor, maxColor)
 
 let outMin = 0
 let outMax = midPoints - 1
 
+let token
+let floorId
+let spaceApiData
 let hasLoaded = false
 let fpe
 let layer
 let colorScheme
-let gradientMetric
 let cursorMarker
 let nearestMarkers = []
 
 let desks
 let deskCount
 let selectedSpaces
-let plants
+let selectedAssets
+let windowsOnPerimeter
 
 let prevClickedAssetId
 
@@ -54,7 +58,8 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
   const container = useRef(null);
 
   console.log('model', model)
-  const { token, floorId } = model
+  token = model.token
+  floorId = model.floorId
 
   function addMarker(fpe, position, isCursorMarker, markerType = 'defalut-marker') {
     const el = document.createElement('div');
@@ -129,9 +134,13 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
     }
 
     const plant = resources.assets.filter(asset => asset.subCategories.includes('plant'))
-        
-    plants = {
-      plant: plant
+    const window = fpe.scene.nodesByType.window.map(node => {
+      return node.getWorldPosition()
+    })
+    
+    selectedAssets = {
+      plant: plant,
+      window: window
     }
   }
 
@@ -201,7 +210,7 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
     
   function createDeskDistanceObject(){
     // arrays of shortest distances to all space and asset type from each desk
-    const resourcesForIndexCacl = ['meetingRoom', 'socializeSpace', 'amenity', 'circulate', 'plant']
+    const resourcesForIndexCacl = ['meetingRoom', 'socializeSpace', 'amenity', 'circulate', 'plant', 'window']
     const shortestDistancesFromDesks = {}
     resourcesForIndexCacl.forEach(key => shortestDistancesFromDesks[key] = [])
 
@@ -231,21 +240,26 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
         }
       }
 
-      for (let plant in plants){
+      for (let assetType in selectedAssets){
         const assetDistanceArr = []
 
-        if(plants[plant].length !== 0){
-          plants[plant].map(asset => {
-            const distance = getDistance({x: desk.position.x, y: desk.position.z}, {x: asset.position.x, y: asset.position.z})
+        if(selectedAssets[assetType].length !== 0){
+          selectedAssets[assetType].map(asset => {
+            let distance 
+            if(assetType === 'window'){
+              distance = getDistance({x: desk.position.x, y: desk.position.z}, {x: asset.x, y: asset.z})
+            } else {
+              distance = getDistance({x: desk.position.x, y: desk.position.z}, {x: asset.position.x, y: asset.position.z})
+            }
             assetDistanceArr.push({distance, asset})
           })
           assetDistanceArr.sort((a, b) => a.distance - b.distance)
-          shortestDistancesFromDesks[plant].push(assetDistanceArr[0].distance)
-          deskDistanceObject.distances[plant] = assetDistanceArr[0].distance
-          deskDistanceObject.closestResources[plant] = assetDistanceArr[0].asset
+          shortestDistancesFromDesks[assetType].push(assetDistanceArr[0].distance)
+          deskDistanceObject.distances[assetType] = assetDistanceArr[0].distance
+          deskDistanceObject.closestResources[assetType] = assetDistanceArr[0].asset
         } else {
-          shortestDistancesFromDesks[plant] = []
-          deskDistanceObject.distances[plant] = undefined
+          shortestDistancesFromDesks[assetType] = []
+          deskDistanceObject.distances[assetType] = undefined
         }
       }
       deskDistanceObjects.push(deskDistanceObject)
@@ -293,6 +307,7 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
       deskMetricIndexObject.metric['amenity'] = remappedValues.amenity
       deskMetricIndexObject.metric['circulate'] = remappedValues.circulate
       deskMetricIndexObject.metric['green'] = remappedValues.plant
+      deskMetricIndexObject.metric['naturalLight'] = remappedValues.window
 
       const collabIndex = calculateIndex(deskMetricIndexObject.metric, 'collaborative')
       const quietIndex = calculateIndex(deskMetricIndexObject.metric, 'quiet')
@@ -316,8 +331,8 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
   }
   function calculateIndex(metric, typeOfWork){
     const selectedMetricArr = {
-      collaborative: ['social', 'amenity', 'circulate', 'green'],
-      quiet: ['amenity', 'circulate', 'green', "invertedNoise"]
+      collaborative: ['social', 'amenity', 'circulate', 'green', 'naturalLight'],
+      quiet: ['amenity', 'circulate', 'green', 'naturalLight', 'invertedNoise']
     }
     let sum = 0
     let count = 0
@@ -331,7 +346,6 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
   }
   
   function applyGradients(){
-    console.log('function fired')
     if(!model.index) return 
     if(prevIndex && prevIndex === model.index) return
   
@@ -376,20 +390,17 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
       if (prevClickedAssetId && prevClickedAssetId == selectedAsset.id) return
       prevClickedAssetId = selectedAsset.id
       
-      //remove markers if exists
       removeCursorMarker()
       removeNearestMarkers()
 
-      //add cursorMarker
       cursorMarker = addMarker(fpe, position, true)
       
       const match = deskIndexObjects.find(desk => desk.desk.id === selectedAsset.id)
       console.log('match', match)
 
-      //add markers to nearest resources
       for (let resourceType in match.closestResources){
         const resource = match.closestResources[resourceType]
-        if(resourceType === 'amenity' || resourceType === 'circulate'){
+        if(resourceType === 'amenity' || resourceType === 'circulate' || resourceType === 'window'){
           console.log('no icon available atm')
         } else if(resourceType === 'plant'){
           const marker = addMarker(fpe, [resource.position.x, resource.position.z], false, resourceType)
@@ -403,21 +414,21 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
     })
   }
 
-  async function initFloorPlan(){
-    if(!token || !floorId) return
-    
+  async function init(){
     fpe = new FloorPlanEngine({container: container.current, options: startupSettings})
-    const fpeLoaded = await fpe.loadScene(floorId, {publishableAccessToken: token})
+    await fpe.loadScene(floorId, {publishableAccessToken: token})
     hasLoaded = floorId
     prevIndex = undefined
-    
-    return fpe
+
+    //spaceApiData = await fetch(`${apiBaseURL}/space?floorId=${floorId}&pubtoken=${token}&geometry=true`).then(res => res.json())
   }
+  
   useEffect(() => {
+    if(!token || !floorId) return
     if(fpe && hasLoaded === floorId) return
     if(container.current){
-      initFloorPlan()
-      .then((fpe) => {
+      init()
+      .then(() => {
         selectSpacesAssets(fpe.resources)
         createSpaceColorObjects(fpe.resources.spaces)
         createDeskDistanceObject()
