@@ -40,6 +40,7 @@ let layer
 let colorScheme
 let cursorMarker
 let nearestMarkers = []
+let bestWorstMarkers = []
 
 let desks
 let deskCount
@@ -53,6 +54,10 @@ let prevIndex
 
 let minMaxDistances
 let minMaxIndex
+const minMaxObject = {
+  collaborative: {min: {value: 10, desk: undefined}, max: {value: 0, desk: undefined}}, 
+  quiet: {min: {value: 10, desk: undefined}, max: {value: 0, desk: undefined}}
+}
 
 const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
   const container = useRef(null);
@@ -89,6 +94,12 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
     if (nearestMarkers.length !== 0){
       nearestMarkers.forEach(marker => marker.remove())
       nearestMarkers = [];
+    }
+  }
+  function removeBestWorstMarkers(){
+    if(bestWorstMarkers.length !== 0){
+      bestWorstMarkers.forEach(marker => marker.remove())
+      bestWorstMarkers = []
     }
   }
 
@@ -284,7 +295,7 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
       collaborative: [],
       quiet: []
     }
-    
+
     deskDistanceObjects.forEach(desk => {
       const remappedValues = {}
       for (const metric in desk.distances) {
@@ -294,7 +305,6 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
         remappedValues[metric] = 10 - remappedInt
       }
       const deskMetricIndexObject = {...desk, metric: {}, index: {}}
-      
       
       deskMetricIndexObject.metric['social'] = remappedValues.socializeSpace
       
@@ -311,6 +321,25 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
 
       const collabIndex = calculateIndex(deskMetricIndexObject.metric, 'collaborative')
       const quietIndex = calculateIndex(deskMetricIndexObject.metric, 'quiet')
+      
+      if(collabIndex < minMaxObject.collaborative.min.value){
+        minMaxObject.collaborative.min.value = collabIndex
+        minMaxObject.collaborative.min.desk = desk.desk
+      } 
+      if(collabIndex > minMaxObject.collaborative.max.value){
+        minMaxObject.collaborative.max.value = collabIndex
+        minMaxObject.collaborative.max.desk = desk.desk
+      }
+
+      if(quietIndex < minMaxObject.quiet.min.value){
+        minMaxObject.quiet.min.value = quietIndex
+        minMaxObject.quiet.min.desk = desk.desk
+      } 
+      if(quietIndex > minMaxObject.quiet.max.value){
+        minMaxObject.quiet.max.value = quietIndex
+        minMaxObject.quiet.max.desk = desk.desk
+      }
+
       deskMetricIndexObject.index['collaborative'] = collabIndex
       deskMetricIndexObject.index['quiet'] = quietIndex
 
@@ -319,6 +348,7 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
       indexValueArr.collaborative.push(collabIndex)
       indexValueArr.quiet.push(quietIndex)
     })
+
     minMaxIndex = {}
     for (let index in indexValueArr){
       const length = indexValueArr[index].length
@@ -361,6 +391,21 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
         fillOpacity: 1
       })
     })
+  }
+
+  function addMarkerToBestWorst(){
+    if(!model.index) return 
+    
+    removeBestWorstMarkers()
+
+    const minDesk = minMaxObject[model.index].min.desk
+    const maxDesk = minMaxObject[model.index].max.desk
+    
+    const worstMarker = addMarker(fpe, [minDesk.position.x, minDesk.position.z], false, 'worst')
+    const bestMarer = addMarker(fpe, [maxDesk.position.x, maxDesk.position.z], false, 'best')
+
+    bestWorstMarkers.push(worstMarker)
+    bestWorstMarkers.push(bestMarer)
   }
 
   function onClick(fpe){
@@ -441,6 +486,7 @@ const FloorPlan = ({ triggerQuery, model, modelUpdate }) => {
     if(!fpe) return
     onClick(fpe)
     applyGradients()
+    addMarkerToBestWorst()
     if(model.colorScheme === colorScheme) return
     if(!colorScheme) return
     createSpaceColorObjects(fpe.resources.spaces)

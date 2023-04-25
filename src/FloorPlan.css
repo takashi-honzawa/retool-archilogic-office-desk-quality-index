@@ -79,3 +79,18 @@ canvas,
 .plant {
   background-image: url('https://takashi-honzawa.github.io/retool-template-icons/desk-quality-index/plant.png');
 }
+/* best/worst stars */
+.best {
+  width: 24px;
+  height: 24px;
+  border: 2pt solid #21ff00;
+  background-color: white/*transparent*/;
+  background-image: url('https://takashi-honzawa.github.io/retool-template-icons/desk-quality-index/star-best.png');
+}
+.worst {
+  width: 24px;
+  height: 24px;
+  border: 2pt solid #df9a9a;
+  background-color: white/*transparent*/;
+  background-image: url('https://takashi-honzawa.github.io/retool-template-icons/desk-quality-index/star-worst.png');
+}
